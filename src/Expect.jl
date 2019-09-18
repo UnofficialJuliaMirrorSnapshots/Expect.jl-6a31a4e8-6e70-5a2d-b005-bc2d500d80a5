@@ -4,16 +4,15 @@ export ExpectProc, interact, expect!, with_timeout!, raw!, sendeof
 export ExpectTimeout, ExpectEOF
 
 ## Imports
-using Compat: @__DIR__
 import Base.Libc: strerror
 import Base: Process, TTY, wait, wait_readnb, wait_readbyte
 import Base: kill, process_running, process_exited, success
 import Base: write, print, println, flush, eof, close
 import Base: read, readbytes!, readuntil
-import Base: isopen, nb_available, readavailable
+import Base: isopen, bytesavailable, readavailable
 
 ## UNIX/tty support lib
-@static if is_unix()
+@static if Sys.isunix()
     const LIBEXJL = joinpath(@__DIR__, "../deps/libexjl.so")
 
     function _set_cloexec(fd::RawFD)
@@ -22,16 +21,16 @@ import Base: isopen, nb_available, readavailable
 
     function _sendeof(tty::TTY)
         flush(tty) # flush any pending buffer in jl/uv
-        ccall((:exjl_sendeof, LIBEXJL), Cint, (Ptr{Void},), tty)
+        ccall((:exjl_sendeof, LIBEXJL), Cint, (Ptr{Nothing},), tty)
     end
 end
 
 
 ## Types
-type ExpectTimeout <: Exception end
-type ExpectEOF <: Exception end
+struct ExpectTimeout <: Exception end
+struct ExpectEOF <: Exception end
 
-type ExpectProc <: IO
+mutable struct ExpectProc <: IO
     proc::Process
     timeout::Real
     encode::Function
@@ -42,11 +41,11 @@ type ExpectProc <: IO
     match
     buffer::Vector{UInt8}
 
-    function ExpectProc(cmd::Cmd, timeout::Real; env::Base.EnvHash=ENV, encoding="utf8", pty=true)
+    function ExpectProc(cmd::Cmd, timeout::Real; env::Base.EnvDict=ENV, encoding="utf8", pty=true)
         # TODO: only utf8 is currently supported
         @assert encoding == "utf8"
-        encode = x->transcode(UInt8, x)
-        decode = x->transcode(String, x)
+        encode = x->collect(transcode(UInt8, x))
+        decode = x->transcode(String, copy(x))
 
         in_stream, out_stream, proc = _spawn(cmd, env, pty)
         new(proc, timeout, encode, decode,
@@ -61,10 +60,10 @@ function raw!(tty::TTY, raw::Bool)
     # UV_TTY_MODE_IO (cfmakeraw) is only available with libuv 1.0 and not
     # directly supported by jl_tty_set_mode (JL_TTY_MODE_RAW still performs NL
     # conversion).
-    const UV_TTY_MODE_NORMAL = 0
-    const UV_TTY_MODE_IO = 2
-    mode = raw? UV_TTY_MODE_IO: UV_TTY_MODE_NORMAL
-    ret = ccall(:uv_tty_set_mode, Cint, (Ptr{Void},Cint), tty.handle, mode)
+    UV_TTY_MODE_NORMAL = 0
+    UV_TTY_MODE_IO = 2
+    mode = raw ? UV_TTY_MODE_IO : UV_TTY_MODE_NORMAL
+    ret = ccall(:uv_tty_set_mode, Cint, (Ptr{Nothing},Cint), tty.handle, mode)
     ret == 0
 end
 
@@ -73,27 +72,19 @@ function raw!(proc::ExpectProc, raw::Bool)
         # pipes are always raw
         return raw
     else
-        @static if VERSION < v"0.7"
-            # libuv keeps an internal "mode" state which prevents us to call
-            # cfmakeraw() again, even if the connected slave changed the discipline
-            # on our back. Work this around by toggling the mode twice.
-            # See: https://github.com/libuv/libuv/issues/1292
-            # TODO: determine valid VERSION when fix gets merged
-            raw!(proc.out_stream, !raw)
-        end
         raw!(proc.out_stream, raw)
     end
 end
 
 
-function _spawn(cmd::Cmd, env::Base.EnvHash, pty::Bool)
+function _spawn(cmd::Cmd, env::Base.EnvDict, pty::Bool)
     env = copy(ENV)
     env["TERM"] = "dumb"
     setenv(cmd, env)
 
-    if pty && is_unix()
-        const O_RDWR = Base.Filesystem.JL_O_RDWR
-        const O_NOCTTY = Base.Filesystem.JL_O_NOCTTY
+    if pty && Sys.isunix()
+        O_RDWR = Base.Filesystem.JL_O_RDWR
+        O_NOCTTY = Base.Filesystem.JL_O_NOCTTY
 
         fdm = RawFD(ccall(:posix_openpt, Cint, (Cint,), O_RDWR|O_NOCTTY))
         fdm == RawFD(-1) && error("openpt failed: $(strerror())")
@@ -121,26 +112,27 @@ function _spawn(cmd::Cmd, env::Base.EnvHash, pty::Bool)
 
         local proc::Process
         try
-            proc = spawn(cmd, (fds, fds, fds))
+            proc = run(cmd, (fds, fds, fds), wait=false)
         catch ex
             ccall(:close, Cint, (Cint,), fds)
             close(ttym)
             rethrow(ex)
         end
 
-        @schedule begin
+        @async begin
             wait(proc)
             close(ttym)
             ccall(:close, Cint, (Cint,), fds)
         end
+
+        Base.start_reading(in_stream)
     else
         pipe = Pipe()
-        in_stream, proc = open(cmd, "r", pipe)
+        proc = open(cmd, "r", pipe)
         out_stream = Base.pipe_writer(pipe)
-        in_stream = Base.pipe_reader(in_stream)
+        in_stream = Base.pipe_reader(proc)
     end
 
-    Base.start_reading(in_stream)
     return (in_stream, out_stream, proc)
 end
 
@@ -167,9 +159,13 @@ end
 
 write(proc::ExpectProc, buf::Vector{UInt8}) = write(proc.out_stream, buf)
 write(proc::ExpectProc, buf::AbstractString) = write(proc, proc.encode(buf))
-write(proc::ExpectProc, buf::String) = write(proc, proc.encode(buf))
 print(proc::ExpectProc, x::AbstractString) = write(proc, x)
 println(proc::ExpectProc, x::AbstractString) = write(proc, string(x, "\n"))
+# resolve method ambiguity
+const ContiguousString = Union{String,SubString{String}}
+write(proc::ExpectProc, buf::ContiguousString) = write(proc, proc.encode(buf))
+print(proc::ExpectProc, x::ContiguousString) = write(proc, x)
+println(proc::ExpectProc, x::ContiguousString) = write(proc, string(x, "\n"))
 
 # Reading functions
 function _timed_wait(func::Function, proc::ExpectProc; timeout::Real=proc.timeout)
@@ -217,25 +213,25 @@ readbytes!(proc::ExpectProc, b::AbstractVector{UInt8}, nb=length(b); timeout::Re
         readbytes!(proc.in_stream, b, nb)
     end
 
-readuntil(proc::ExpectProc, delim::AbstractString; timeout::Real=proc.timeout) =
+readuntil(proc::ExpectProc, delim::AbstractString; timeout::Real=proc.timeout, keep::Bool=false) =
     _timed_wait(proc; timeout=timeout) do
-        readuntil(proc.in_stream, delim)
+        readuntil(proc.in_stream, delim, keep=keep)
     end
 
 isopen(proc::ExpectProc) = isopen(proc.in_stream)
-nb_available(proc::ExpectProc) = nb_available(proc.in_stream)
+bytesavailable(proc::ExpectProc) = bytesavailable(proc.in_stream)
 readavailable(proc::ExpectProc) = readavailable(proc.in_stream)
 
 
 # Expect
 function _expect_search(buf::AbstractString, str::AbstractString)
-    pos = search(buf, str)
-    return pos == 0:-1? nothing: (buf[pos], pos)
+    pos = findfirst(str, buf)
+    return pos == nothing ? nothing : (buf[pos], pos)
 end
 
 function _expect_search(buf::AbstractString, regex::Regex)
     m = match(regex, buf)
-    return m == nothing? nothing: (m.match, m.offset:(m.offset+length(m.match)-1))
+    return m == nothing ? nothing : (m.match, m.offset:(m.offset+length(m.match)-1))
 end
 
 function _expect_search(buf::AbstractString, vec::Vector)
@@ -253,11 +249,11 @@ function expect!(proc::ExpectProc, vec; timeout::Real=proc.timeout)
     pos = 0:-1
     idx = 0
     while true
-        if nb_available(proc.in_stream) > 0
+        if bytesavailable(proc.in_stream) > 0
             proc.buffer = vcat(proc.buffer, readavailable(proc.in_stream))
         end
         if length(proc.buffer) > 0
-            buffer = try proc.decode(proc.buffer) end
+            buffer = try proc.decode(proc.buffer); finally; end
             if buffer != nothing
                 ret = _expect_search(buffer, vec)
                 if ret != nothing

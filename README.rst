@@ -188,7 +188,8 @@ Authors and Copyright
 ---------------------
 
 | "Expect.jl" is distributed under the MIT license (see ``LICENSE.rst``).
-| Copyright(c) 2014-2017 by wave++ "Yuri D'Elia" <wavexx@thregr.org>.
+| Copyright(c) 2014-2017 by wave++ "Yuri D'Elia" <wavexx@thregr.org> and
+| `Jorge A. Pérez-Hernández <https://gitlab.com/PerezHz>`_.
 
 
 .. _Expect: http://www.nist.gov/el/msid/expect.cfm
