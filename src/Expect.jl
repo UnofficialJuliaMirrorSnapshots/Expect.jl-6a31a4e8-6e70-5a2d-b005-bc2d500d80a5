@@ -5,7 +5,12 @@ export ExpectTimeout, ExpectEOF
 
 ## Imports
 import Base.Libc: strerror
-import Base: Process, TTY, wait, wait_readnb, wait_readbyte
+import Base: Process, TTY, wait, wait_readnb
+if VERSION ≤ v"1.3.0-rc1.0"
+    import Base.wait_readbyte
+else
+    import Base.wait_close
+end
 import Base: kill, process_running, process_exited, success
 import Base: write, print, println, flush, eof, close
 import Base: read, readbytes!, readuntil
@@ -88,7 +93,11 @@ function _spawn(cmd::Cmd, env::Base.EnvDict, pty::Bool)
 
         fdm = RawFD(ccall(:posix_openpt, Cint, (Cint,), O_RDWR|O_NOCTTY))
         fdm == RawFD(-1) && error("openpt failed: $(strerror())")
-        ttym = TTY(fdm; readable=true)
+        if VERSION ≤ v"1.1.0"
+            ttym = TTY(fdm; readable=true)
+        else
+            ttym = TTY(fdm)
+        end
         in_stream = out_stream = ttym
 
         rc = _set_cloexec(fdm)
@@ -197,9 +206,17 @@ function wait_readnb(proc::ExpectProc, nb::Int; timeout::Real=proc.timeout)
     end
 end
 
-function wait_readbyte(proc::ExpectProc, c::UInt8; timeout::Real=proc.timeout)
-    _timed_wait(proc; timeout=timeout) do
-        wait_readbyte(proc.in_stream, c)
+if VERSION ≤ v"1.3.0-rc1.0"
+    function wait_readbyte(proc::ExpectProc, c::UInt8; timeout::Real=proc.timeout)
+        _timed_wait(proc; timeout=timeout) do
+            wait_readbyte(proc.in_stream, c)
+        end
+    end
+else
+    function wait_close(proc::ExpectProc; timeout::Real=proc.timeout)
+        _timed_wait(proc; timeout=timeout) do
+            wait_close(proc.in_stream)
+        end
     end
 end
 

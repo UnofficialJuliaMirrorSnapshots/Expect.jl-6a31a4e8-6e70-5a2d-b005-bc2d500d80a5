@@ -9,19 +9,7 @@
 #   script:
 #     - julia --project=@. -e "import Pkg; Pkg.test(; coverage = true)"
 
-# pages:
-#   stage: deploy
-#   script:
-#     - julia --project=docs -e 'using Pkg; Pkg.instantiate(); Pkg.develop(PackageSpec(path=pwd()))'
-#     - julia --project=docs --color=yes docs/make.jl
-#     - mv docs/build public # move to the directory picked up by Gitlab pages
-#   artifacts:
-#     paths:
-#       - public
-#   only:
-#   - master
-
-linux:
+Julia 1.0:
   image: julia:1.0                # image comes from Docker hub
   before_script:
     # workaround for https://github.com/JuliaDocs/Documenter.jl/issues/686
@@ -34,14 +22,27 @@ linux:
   tags:
     - linux
 
-osx:
+Julia 1.2:
+  image: julia:1.2                # image comes from Docker hub
   before_script:
     # workaround for https://github.com/JuliaDocs/Documenter.jl/issues/686
-    # - apt-get -qq update; apt-get -y install git; apt-get -y install make; apt-get -y install gcc
-    - julia1.0 --project=@. -e "import Pkg; Pkg.build()"
+    - apt-get -qq update; apt-get -y install git; apt-get -y install make; apt-get -y install gcc
+    - julia --project=@. -e "import Pkg; Pkg.build()"
   script:
-    - julia1.0 --project=@. -e "import Pkg; Pkg.test(; coverage = true)"
+    - julia --project=@. -e "import Pkg; Pkg.test(; coverage = true)"
   after_script:
-    - julia1.0 -e 'using Pkg; Pkg.add("Coverage"); using Coverage; Codecov.submit_local(process_folder())'
+    - julia -e 'using Pkg; Pkg.add("Coverage"); using Coverage; Codecov.submit_local(process_folder())'
   tags:
-    - osx
+    - linux
+
+# pages:
+#   stage: deploy
+#   script:
+#     - julia --project=docs -e 'using Pkg; Pkg.instantiate(); Pkg.develop(PackageSpec(path=pwd()))'
+#     - julia --project=docs --color=yes docs/make.jl
+#     - mv docs/build public # move to the directory picked up by Gitlab pages
+#   artifacts:
+#     paths:
+#       - public
+#   only:
+#   - master
