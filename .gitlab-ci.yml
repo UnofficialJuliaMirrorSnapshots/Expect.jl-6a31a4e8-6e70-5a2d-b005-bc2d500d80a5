@@ -1,13 +1,4 @@
 # This script has been adapted from https://gitlab.com/tkpapp/GitlabJuliaDemo.jl/blob/master/.gitlab-ci.yml
-# image: julia:1.0                # image comes from Docker hub
-# before_script:
-#   # workaround for https://github.com/JuliaDocs/Documenter.jl/issues/686
-#   - apt-get -qq update; apt-get -y install git; apt-get -y install make; apt-get -y install gcc
-#   - julia --project=@. -e "import Pkg; Pkg.build()"
-
-# default:
-#   script:
-#     - julia --project=@. -e "import Pkg; Pkg.test(; coverage = true)"
 
 Julia 1.0:
   image: julia:1.0                # image comes from Docker hub
@@ -17,10 +8,21 @@ Julia 1.0:
     - julia --project=@. -e "import Pkg; Pkg.build()"
   script:
     - julia --project=@. -e "import Pkg; Pkg.test(; coverage = true)"
-  after_script:
-    - julia -e 'using Pkg; Pkg.add("Coverage"); using Coverage; Codecov.submit_local(process_folder())'
+    - julia --project=test/coverage -e 'import Pkg; Pkg.instantiate()'
+    - julia --project=test/coverage test/coverage/coverage-summary.jl
   tags:
     - linux
+  # pages:
+  #   stage: deploy
+  #   script:
+  #     - julia --project=docs -e 'using Pkg; Pkg.instantiate(); Pkg.develop(PackageSpec(path=pwd()))'
+  #     - julia --project=docs --color=yes docs/make.jl
+  #     - mv docs/build public # move to the directory picked up by Gitlab pages
+  #   artifacts:
+  #     paths:
+  #       - public
+  #   only:
+  #   - master
 
 Julia 1.2:
   image: julia:1.2                # image comes from Docker hub
@@ -30,19 +32,18 @@ Julia 1.2:
     - julia --project=@. -e "import Pkg; Pkg.build()"
   script:
     - julia --project=@. -e "import Pkg; Pkg.test(; coverage = true)"
-  after_script:
-    - julia -e 'using Pkg; Pkg.add("Coverage"); using Coverage; Codecov.submit_local(process_folder())'
+    - julia --project=test/coverage -e 'import Pkg; Pkg.instantiate()'
+    - julia --project=test/coverage test/coverage/coverage-summary.jl
   tags:
     - linux
-
-# pages:
-#   stage: deploy
-#   script:
-#     - julia --project=docs -e 'using Pkg; Pkg.instantiate(); Pkg.develop(PackageSpec(path=pwd()))'
-#     - julia --project=docs --color=yes docs/make.jl
-#     - mv docs/build public # move to the directory picked up by Gitlab pages
-#   artifacts:
-#     paths:
-#       - public
-#   only:
-#   - master
+  # pages:
+  #   stage: deploy
+  #   script:
+  #     - julia --project=docs -e 'using Pkg; Pkg.instantiate(); Pkg.develop(PackageSpec(path=pwd()))'
+  #     - julia --project=docs --color=yes docs/make.jl
+  #     - mv docs/build public # move to the directory picked up by Gitlab pages
+  #   artifacts:
+  #     paths:
+  #       - public
+  #   only:
+  #   - master
